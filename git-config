@@ -21,13 +21,17 @@ cli.with {
     c(longOpt: 'configure', 'Configure user info \n', required: false)
     s(longOpt: 'show', 'Show user info \n', required: false)
     sl(longOpt: 'show-local', 'Show local configuration \n', required: false)
-    p(longOpt: 'personal','use personal configuration', required: false)
-    w(convert: { it as String }, longOpt: 'work','use work configuration', required: false)
+    p(convert: { it as String }, longOpt: 'profile','use profile configuration', required: false)
     i(convert: { new File(it) }, longOpt: 'input','name of the configuration file', required: false)
 }
 
 // Read the input from console
 def options = cli.parse(args)
+if (!options) {
+    println "Invalid arguments, please see the usage section: "
+    cli.usage()
+    return
+}
 File homeFolder = new File(HOME_FOLDER)
 File configurationFile = new File(HOME_FOLDER, "config.json")
 
@@ -54,20 +58,38 @@ def readData = { type ->
     config
 }
 
-def setupRepositoryConfig = { type, gitConfig ->
+def readAndValidateProfile = {
+    print "Do you want to add new profile? y/n: "
+    String answer = System.in.newReader().readLine().toLowerCase()
+    if( answer != 'y' ) {
+        return false
+    }
+
+    print "Type the name of the profile: "
+    answer = System.in.newReader().readLine().toLowerCase()
+    answer
+}
+
+def setupRepositoryConfig = { profile, gitConfig ->
     GitConfig config = gitConfig as GitConfig
-    println "Setting up configuration [${type}] for the current repository"
-    "git config user.email ${config?.userEmail}".execute().waitFor()
+    if(!config) {
+       println "Invalid configuration [${profile}] please verify the information and try again"
+       System.exit(1)
+    }
+    println "Setting up configuration [${profile}] for the current repository"
+    "git config user.email ${config.userEmail}".execute().waitFor()
     ['git', 'config', 'user.name', config.userName].execute().waitFor()
 
 }
 
 def configure = {
     println "Setting up configuration"
-    Map<String, GitConfig> configuration = [
-       'personal' : readData('personal'),
-       'work' : readData('work')
-    ]
+    def profileName = 'personal'
+    Map<String, GitConfig> configuration = [:]
+
+    do {
+      configuration << [(profileName) : readData(profileName)]
+    } while((profileName = readAndValidateProfile()))
 
     configurationFile.withWriter { out ->
         out.write(JsonOutput.prettyPrint(JsonOutput.toJson(configuration)))
@@ -87,14 +109,7 @@ def readConfiguration = {
         println ia.message
         configuration = configure()
     }
-
-
-    if(options.p) {
-        setupRepositoryConfig('personal', configuration['personal'])
-    } else {
-        setupRepositoryConfig(options.w, configuration[options.w])
-    }
-    showLocalConfiguration()
+    configuration
 }
 
 if(!homeFolder.exists()) {
@@ -132,4 +147,11 @@ if(options.sl) {
     return
 }
 
-readConfiguration()
+// Setup configuration for local env
+Map<String, GitConfig> configuration = readConfiguration()
+if(options.p) {
+    setupRepositoryConfig(options.p, configuration[options.p])
+} else {
+    setupRepositoryConfig('personal', configuration['personal'])
+}
+showLocalConfiguration()
